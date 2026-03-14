@@ -21,6 +21,12 @@ public class Main {
     private final static String[] COLAS_BANCOS = {"BANRURAL", "BAC", "BI", "GYT"}; 
     private final static String RABBIT_HOST = "localhost";
     private final static String API_POST_URL = "https://7e0d9ogwzd.execute-api.us-east-1.amazonaws.com/default/guardarTransacciones";
+    
+    private final static String COLA_DUPLICADOS = "cola_duplicados";
+    private final static String COLA_ERRORES = "cola_errores";
+    private static java.util.Set<String> idsProcesados = new java.util.HashSet<>();
+    
+    
 
     public static void main(String[] args) {
         try {
@@ -29,6 +35,9 @@ public class Main {
             factory.setHost(RABBIT_HOST);
             Connection connection = factory.newConnection();
             Channel channel = connection.createChannel();
+            
+            channel.queueDeclare(COLA_DUPLICADOS, false, false, false, null);
+            channel.queueDeclare(COLA_ERRORES, false, false, false, null);
             
             ObjectMapper mapper = new ObjectMapper();
             HttpClient httpClient = HttpClient.newHttpClient();
@@ -46,17 +55,31 @@ public class Main {
                     try {
                         // 1. Deserializar el mensaje
                         Transaccion tx = mapper.readValue(message, Transaccion.class);
+                        String idActual = tx.getIdTransaccion();
                         
-                       tx.setNombre("Jose Cruz");
-					   tx.setCarnet("0905-24-3576");
-					   tx.setCorreo("jcruzf6@miumg.edu.gt");
+                        if (idsProcesados.contains(idActual)) {
+                            System.out.println("ID: " + idActual + " | ESTADO: DUPLICADO | COLA DESTINO: " + COLA_DUPLICADOS);
+                            
+                            // Enviar a cola de duplicados y confirmar
+                            channel.basicPublish("", COLA_DUPLICADOS, null, message.getBytes(StandardCharsets.UTF_8));
+                            channel.basicAck(delivery.getEnvelope().getDeliveryTag(), false);
+                            return; // Salimos para no procesar el resto
+                        }
+
+                        // Si es nuevo, lo agregamos al Set
+                        idsProcesados.add(idActual);
+                        tx.setNombre("Jose Cruz");
+                        tx.setCarnet("0905-24-3576");
+					    tx.setCorreo("jcruzf6@miumg.edu.gt");
+					    
+					    System.out.println("ATENDIENDO COLA: " + queueName + " | PROCESANDO ID: " + idActual);
+                        System.out.println("ID: " + idActual + " | ESTADO: PROCESANDO | COLA DESTINO: " + queueName);
+                        
+                        String jsonBody = mapper.writeValueAsString(tx);
                         
                         logger.info("[v] Recibido de " + queueName + ": " + tx.getIdTransaccion());
 
-                        // 2. Convertir a JSON para el POST
-                        String jsonBody = mapper.writeValueAsString(tx);
-
-                        // --- INICIO DE LA SUGERENCIA: LÓGICA DE REINTENTO ---
+                        
                         int intentosMaximos = 2; 
                         int intentoActual = 0;
                         boolean completado = false;
@@ -86,15 +109,15 @@ public class Main {
                         }
 
                         if (!completado) {
-                            logger.error(" [X] Agotados los reintentos para: " + tx.getIdTransaccion());
-                            // Se devuelve a la cola para no perderlo (Garantía de no pérdida)
-                            channel.basicNack(delivery.getEnvelope().getDeliveryTag(), false, true);
+                            System.out.println("ID: " + idActual + " | ESTADO: FALLIDO | COLA DESTINO: " + COLA_ERRORES);
+                            channel.basicPublish("", COLA_ERRORES, null, message.getBytes(StandardCharsets.UTF_8));
+                            channel.basicAck(delivery.getEnvelope().getDeliveryTag(), false);
                         }
-                        // --- FIN DE LA SUGERENCIA ---
+                        
 
                     } catch (Exception e) {
-                        logger.error(" [!] Error procesando mensaje: " + e.getMessage());
-                        channel.basicNack(delivery.getEnvelope().getDeliveryTag(), false, true);
+                    	channel.basicPublish("", COLA_ERRORES, null, message.getBytes(StandardCharsets.UTF_8));
+                        channel.basicAck(delivery.getEnvelope().getDeliveryTag(), false);
                     }
                 };
 
