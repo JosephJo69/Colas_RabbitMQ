@@ -44,3 +44,5 @@ Ejecutar el proyecto Consumer para iniciar la escucha de las colas.
 Ejecutar el proyecto Producer para cargar el lote de transacciones.
 
 Verificar la persistencia en el archivo de log generado en la carpeta del proyecto.
+
+Link del video: https://drive.google.com/file/d/12v21BNOJ-omELDx9Ghzvo38ElcLXZEmz/view?usp=drive_link
